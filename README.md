@@ -1,32 +1,71 @@
 # YouTube Transcriber with Local Speaker Diarization
 
-This project downloads audio from a YouTube video, transcribes it locally, and formats the result into simple speaker blocks like:
+This project downloads audio from a video URL, transcribes it locally, and saves organized outputs in a readable folder structure under:
+
+```text
+/Users/tristan/Documents/Transcripts/
+```
+
+Each run creates a folder named like:
+
+```text
+2026-03-12_future-of-local-journalism_nrtXap6h2Dw/
+```
+
+Inside that folder, the script saves:
+
+* the original downloaded audio
+* a plain Whisper transcript
+* a diarized transcript in `SPEAKER A / SPEAKER B` block format
+* the raw WhisperX diarization JSON
+* metadata about the run
+
+## Features
+
+* Downloads audio from a video URL with `yt-dlp`
+* Converts audio for transcription with `ffmpeg`
+* Generates a plain local transcript with WhisperX
+* Generates a speaker-diarized transcript with WhisperX + pyannote
+* Saves all outputs in a readable, date-based folder
+* Uses a local heuristic to generate a short human-readable folder slug from transcript content
+
+## Output structure
+
+The script saves results to:
+
+```text
+/Users/tristan/Documents/Transcripts/YYYY-MM-DD_short-headline_videoid/
+```
+
+Example:
+
+```text
+/Users/tristan/Documents/Transcripts/2026-03-12_future-of-local-journalism_nrtXap6h2Dw/
+```
+
+Typical contents:
+
+```text
+source_audio.m4a
+whisper_transcript.txt
+diarized_transcript.txt
+whisperx_diarized_raw.json
+metadata.json
+```
+
+## Transcript format
+
+The diarized transcript is formatted like this:
 
 ```text
 SPEAKER A
-Lorem ipsum dolor sit amet...
+Lorem ipsum dolor sit amet, consectetur adipiscing elit.
 
 SPEAKER B
-Lorem ipsum dolor sit amet...
+Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
 ```
 
-It is designed for a local workflow on macOS using WhisperX, so it does **not** require OpenAI API credits.
-
-## What it does
-
-* Downloads audio from a YouTube video
-* Converts the audio into a format suitable for transcription
-* Transcribes speech locally with WhisperX
-* Uses speaker diarization to distinguish between speakers
-* Saves a clean text transcript in `SPEAKER A / SPEAKER B` block format
-
-## What it does not do
-
-* It does not identify speakers by their real names automatically
-* It does not guarantee perfect speaker separation in noisy or overlapping audio
-* It does not require or use the OpenAI API for transcription
-
-Speaker diarization labels who spoke when, not who the speakers are by name. You can rename speakers manually after the transcript is generated.
+Speaker labels are generic by design. The script identifies who spoke when, but it does not infer real speaker names.
 
 ## Requirements
 
@@ -126,45 +165,56 @@ All commands should return valid paths.
 
 ## Usage
 
-Run the script with a real YouTube URL:
+Run the script with a real video URL:
 
 ```bash
 python app.py "https://www.youtube.com/watch?v=nrtXap6h2Dw"
 ```
 
-If your script supports an explicit output path:
+The script will create a folder inside:
 
-```bash
-python app.py "https://www.youtube.com/watch?v=nrtXap6h2Dw" --output transcript.txt
+```text
+/Users/tristan/Documents/Transcripts/
 ```
+
+and save all generated outputs there.
 
 ## Expected workflow
 
 When the script runs successfully, it should:
 
-1. Download the audio from YouTube
-2. Convert the audio with `ffmpeg`
-3. Transcribe the audio with WhisperX
-4. Align the transcript
-5. Run speaker diarization with pyannote
-6. Save the final `.txt` transcript in speaker-block format
+1. Download the source audio
+2. Save the original audio file
+3. Convert the audio with `ffmpeg`
+4. Generate a plain Whisper transcript
+5. Generate a speaker-diarized transcript
+6. Save the raw diarization JSON
+7. Write a metadata file
+8. Rename the folder to a readable date + headline + video ID format
 
-## Output format
+## Metadata
 
-The final transcript should look like this:
+The script writes a `metadata.json` file containing details such as:
 
-```text
-SPEAKER A
-Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+* original URL
+* video ID
+* video title
+* output folder name
+* creation date
+* model used
+* language setting
 
-SPEAKER B
-Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+## Notes on naming
 
-SPEAKER C
-Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.
-```
+Folder names are generated using:
 
-The speaker labels are generic by design.
+* the current date
+* a short readable slug derived from transcript content
+* the video ID
+
+This keeps folders readable while still making them easy to trace back to the original source.
+
+The current implementation uses a deterministic local heuristic for the slug rather than an online AI service.
 
 ## Troubleshooting
 
@@ -234,10 +284,10 @@ If you run into environment issues under Python 3.14 or newer, recreate the virt
 
 Speaker diarization works best when:
 
-* Speakers do not talk over one another too much
-* The audio is reasonably clean
-* The speakers have distinct voices
-* There is not excessive background noise or music
+* speakers do not talk over one another too much
+* the audio is reasonably clean
+* the speakers have distinct voices
+* there is not excessive background noise or music
 
 Interviews, panels, and stage conversations usually work better than noisy recordings or heavily edited audio.
 
@@ -249,11 +299,12 @@ Do not paste API keys or Hugging Face tokens into issue threads, chat logs, or s
 
 Potential upgrades for this project:
 
-* Automatic cleanup of filler words
-* Optional timestamps in a second output file
-* Export to `.md` or `.docx`
-* A simple web interface for pasting YouTube URLs
-* Manual speaker renaming after transcription
+* optional timestamps in a second output file
+* export to `.md` or `.docx`
+* a simple web interface for pasting video URLs
+* manual speaker renaming after transcription
+* replacing the local slug heuristic with a local LLM-generated headline
+* broader support for non-YouTube embedded video pages
 
 ## License
 

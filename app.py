@@ -11,13 +11,28 @@ import string
 import subprocess
 import sys
 import tempfile
+from datetime import date
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+
+TRANSCRIPTS_ROOT = Path("/Users/tristan/Documents/Transcripts")
 
 
 def sanitize_filename(value: str) -> str:
     value = re.sub(r"[^a-zA-Z0-9._ -]", "_", value)
     value = re.sub(r"\s+", " ", value).strip()
     return value[:120] or "transcript"
+
+
+def slugify(value: str, max_words: int = 8, max_len: int = 60) -> str:
+    value = value.lower()
+    value = re.sub(r"[^a-z0-9\s-]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    words = value.split()[:max_words]
+    slug = "-".join(words)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug[:max_len].strip("-") or "untitled"
 
 
 def check_command(name: str) -> None:
@@ -28,6 +43,25 @@ def check_command(name: str) -> None:
 
 def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
+
+
+def run_capture(cmd: list[str]) -> str:
+    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    return result.stdout.strip()
+
+
+def extract_video_id(url: str) -> str:
+    parsed = urlparse(url)
+
+    if parsed.netloc in {"youtu.be", "www.youtu.be"}:
+        return parsed.path.strip("/") or "video"
+
+    qs = parse_qs(parsed.query)
+    if "v" in qs and qs["v"]:
+        return qs["v"][0]
+
+    tail = parsed.path.strip("/").split("/")[-1]
+    return tail or "video"
 
 
 def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
@@ -65,6 +99,26 @@ def convert_to_wav(source_path: Path, wav_path: Path) -> Path:
     return wav_path
 
 
+def run_whisper_plain(audio_path: Path, output_dir: Path, model: str, language: str | None) -> Path:
+    cmd = [
+        "whisperx",
+        str(audio_path),
+        "--model", model,
+        "--output_dir", str(output_dir),
+        "--output_format", "txt",
+        "--device", "cpu",
+    ]
+    if language:
+        cmd.extend(["--language", language])
+
+    run(cmd)
+
+    txt_path = output_dir / f"{audio_path.stem}.txt"
+    if not txt_path.exists():
+        raise RuntimeError("Plain Whisper transcript file was not created.")
+    return txt_path
+
+
 def whisperx_transcribe_and_diarize(
     audio_path: Path,
     output_dir: Path,
@@ -97,10 +151,10 @@ def normalize_speaker_name(raw: str, mapping: dict[str, str]) -> str:
     if raw not in mapping:
         idx = len(mapping)
         if idx < 26:
-            letter = string.ascii_uppercase[idx]
+            label = string.ascii_uppercase[idx]
         else:
-            letter = f"A{idx}"
-        mapping[raw] = f"SPEAKER {letter}"
+            label = f"A{idx}"
+        mapping[raw] = f"SPEAKER {label}"
     return mapping[raw]
 
 
@@ -108,13 +162,9 @@ def compact_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def format_speaker_blocks(json_path: Path) -> str:
+def format_diarized_transcript(json_path: Path) -> str:
     data = json.loads(json_path.read_text(encoding="utf-8"))
     segments = data.get("segments", [])
-
-    missing_speaker = sum(1 for seg in segments if "speaker" not in seg)
-    print(f"Segments found: {len(segments)}")
-    print(f"Segments missing speaker label: {missing_speaker}")
 
     speaker_map: dict[str, str] = {}
     blocks: list[tuple[str, str]] = []
@@ -134,26 +184,67 @@ def format_speaker_blocks(json_path: Path) -> str:
             blocks.append((label, text))
 
     if not blocks:
-        raise RuntimeError(
-            "No speaker-labeled transcript segments were found in the JSON. "
-            "Diarization likely did not attach speaker IDs to transcript segments."
-        )
+        raise RuntimeError("No speaker-labeled transcript segments were found.")
 
-    parts = []
-    for speaker, text in blocks:
-        parts.append(f"{speaker}\n{text}")
+    return "\n\n".join(f"{speaker}\n{text}" for speaker, text in blocks).strip() + "\n"
 
-    return "\n\n".join(parts).strip() + "\n"
+
+def generate_headline_slug(video_title: str, transcript_text: str, video_id: str) -> str:
+    # Deterministic, local-only heuristic.
+    # Prefer transcript content if available, otherwise fall back to title.
+    text = transcript_text[:2500].strip()
+    if not text:
+        return slugify(video_title) or video_id
+
+    candidates = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", text.lower())
+    stopwords = {
+        "the", "and", "that", "with", "this", "from", "have", "they", "their", "about",
+        "would", "there", "which", "what", "when", "where", "into", "because", "while",
+        "were", "been", "them", "then", "than", "your", "just", "more", "also", "very",
+        "will", "here", "like", "some", "much", "many", "over", "only", "really", "thank",
+        "thanks", "good", "great", "well", "today", "tonight", "journalism", "news",
+    }
+
+    freq: dict[str, int] = {}
+    for word in candidates:
+        if word in stopwords or len(word) < 4:
+            continue
+        freq[word] = freq.get(word, 0) + 1
+
+    keywords = [w for w, _ in sorted(freq.items(), key=lambda x: (-x[1], x[0]))[:6]]
+    if keywords:
+        return slugify(" ".join(keywords), max_words=6)
+
+    return slugify(video_title) or video_id
+
+
+def write_metadata(
+    path: Path,
+    *,
+    url: str,
+    video_id: str,
+    video_title: str,
+    folder_name: str,
+    whisper_model: str,
+    language: str | None,
+) -> None:
+    metadata = {
+        "url": url,
+        "video_id": video_id,
+        "video_title": video_title,
+        "folder_name": folder_name,
+        "created_on": str(date.today()),
+        "whisper_model": whisper_model,
+        "language": language,
+    }
+    path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Download a YouTube video and create a diarized local transcript."
-    )
-    parser.add_argument("url", help="YouTube URL")
+    parser = argparse.ArgumentParser(description="Download a video, transcribe it locally, and save organized transcript outputs.")
+    parser.add_argument("url", help="Video URL")
     parser.add_argument("--model", default="small", help="WhisperX model")
     parser.add_argument("--language", default=None, help="Optional language hint, e.g. en")
-    parser.add_argument("--output", default=None, help="Optional output .txt file path")
     return parser.parse_args()
 
 
@@ -170,43 +261,76 @@ def main() -> None:
     check_command("ffprobe")
     check_command("whisperx")
 
-    debug_dir = Path.cwd() / "debug_output"
-    debug_dir.mkdir(exist_ok=True)
+    TRANSCRIPTS_ROOT.mkdir(parents=True, exist_ok=True)
+
+    video_id = extract_video_id(args.url)
+    temp_folder = TRANSCRIPTS_ROOT / f"tmp_{video_id}"
+    temp_folder.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="yt_diarize_") as tmp:
         tmp_dir = Path(tmp)
 
-        print("Downloading audio from YouTube...")
-        source_path, title = download_audio(args.url, tmp_dir)
-        print(f"Downloaded: {source_path.name}")
+        print("Downloading audio...")
+        source_path, video_title = download_audio(args.url, tmp_dir)
+        original_ext = source_path.suffix or ".audio"
+        saved_audio_path = temp_folder / f"source_audio{original_ext}"
+        shutil.copy2(source_path, saved_audio_path)
 
-        wav_path = tmp_dir / "audio.wav"
         print("Converting audio...")
+        wav_path = tmp_dir / "audio.wav"
         convert_to_wav(source_path, wav_path)
 
-        print("Running WhisperX diarization...")
-        json_path = whisperx_transcribe_and_diarize(
+        print("Generating plain transcript...")
+        whisper_txt_tmp = run_whisper_plain(
+            audio_path=wav_path,
+            output_dir=tmp_dir,
+            model=args.model,
+            language=args.language,
+        )
+        whisper_transcript = whisper_txt_tmp.read_text(encoding="utf-8")
+        (temp_folder / "whisper_transcript.txt").write_text(whisper_transcript, encoding="utf-8")
+
+        print("Generating diarized transcript...")
+        diarized_json_tmp = whisperx_transcribe_and_diarize(
             audio_path=wav_path,
             output_dir=tmp_dir,
             model=args.model,
             language=args.language,
             hf_token=hf_token,
         )
+        diarized_transcript = format_diarized_transcript(diarized_json_tmp)
+        (temp_folder / "diarized_transcript.txt").write_text(diarized_transcript, encoding="utf-8")
+        (temp_folder / "whisperx_diarized_raw.json").write_text(
+            diarized_json_tmp.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
-        saved_json = debug_dir / f"{sanitize_filename(title)}.json"
-        saved_json.write_text(json_path.read_text(encoding="utf-8"), encoding="utf-8")
-        print(f"Saved raw JSON to: {saved_json}")
+        headline_slug = generate_headline_slug(video_title, diarized_transcript or whisper_transcript, video_id)
+        final_folder_name = f"{date.today()}_{headline_slug}_{video_id}"
+        final_folder = TRANSCRIPTS_ROOT / final_folder_name
 
-        print("Formatting transcript...")
-        transcript = format_speaker_blocks(saved_json)
+        counter = 2
+        while final_folder.exists():
+            final_folder = TRANSCRIPTS_ROOT / f"{final_folder_name}_{counter}"
+            counter += 1
 
-        if args.output:
-            final_path = Path(args.output).expanduser().resolve()
-        else:
-            final_path = Path.cwd() / f"{sanitize_filename(title)}.txt"
+        write_metadata(
+            temp_folder / "metadata.json",
+            url=args.url,
+            video_id=video_id,
+            video_title=video_title,
+            folder_name=final_folder.name,
+            whisper_model=args.model,
+            language=args.language,
+        )
 
-        final_path.write_text(transcript, encoding="utf-8")
-        print(f"\nDone. Transcript saved to:\n{final_path}")
+        temp_folder.rename(final_folder)
+
+        print("\nDone.")
+        print(f"Saved folder:\n{final_folder}")
+        print(f"Original audio:\n{final_folder / f'source_audio{original_ext}'}")
+        print(f"Whisper transcript:\n{final_folder / 'whisper_transcript.txt'}")
+        print(f"Diarized transcript:\n{final_folder / 'diarized_transcript.txt'}")
 
 
 if __name__ == "__main__":

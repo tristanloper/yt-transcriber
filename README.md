@@ -1,49 +1,56 @@
-# YouTube Transcriber with Local Speaker Diarization
+# Local Video Transcriber with Speaker Diarization
 
-This project downloads audio from a video URL, transcribes it locally, and saves organized outputs in a readable folder structure under:
+This project transcribes audio and video into two text outputs:
+
+* a plain transcript
+* a diarized transcript grouped into `SPEAKER A`, `SPEAKER B`, etc.
+
+It is designed for local use on macOS and saves every run into a structured folder under:
 
 ```text
 /Users/tristan/Documents/Transcripts/
 ```
 
-Each run creates a folder named like:
+## What it supports
 
-```text
-2026-03-12_future-of-local-journalism_nrtXap6h2Dw/
+The script accepts three kinds of input:
+
+### 1. Local media file
+
+Examples:
+
+```bash
+python app.py "/Users/tristan/Downloads/interview.mp3"
+python app.py "/Users/tristan/Movies/panel.mp4"
 ```
 
-Inside that folder, the script saves:
+### 2. YouTube URL
 
-* the original downloaded audio
-* a plain Whisper transcript
-* a diarized transcript in `SPEAKER A / SPEAKER B` block format
-* the raw WhisperX diarization JSON
-* metadata about the run
+Example:
 
-## Features
+```bash
+python app.py "https://www.youtube.com/watch?v=nrtXap6h2Dw"
+```
 
-* Downloads audio from a video URL with `yt-dlp`
-* Converts audio for transcription with `ffmpeg`
-* Generates a plain local transcript with WhisperX
-* Generates a speaker-diarized transcript with WhisperX + pyannote
-* Saves all outputs in a readable, date-based folder
-* Uses a local heuristic to generate a short human-readable folder slug from transcript content
+### 3. Webpage with embedded private Vimeo videos
+
+Example:
+
+```bash
+python app.py "https://www.inma.org/modules/event/2026AgenticAI/replay/"
+```
+
+For embedded Vimeo pages, the script uses your browser cookies and page context to find and process the embedded videos.
 
 ## Output structure
 
-The script saves results to:
-
-```text
-/Users/tristan/Documents/Transcripts/YYYY-MM-DD_short-headline_videoid/
-```
-
-Example:
+Each processed source creates a folder like:
 
 ```text
 /Users/tristan/Documents/Transcripts/2026-03-12_future-of-local-journalism_nrtXap6h2Dw/
 ```
 
-Typical contents:
+Inside that folder, the script saves:
 
 ```text
 source_audio.m4a
@@ -53,43 +60,45 @@ whisperx_diarized_raw.json
 metadata.json
 ```
 
+For local files, `source_audio` keeps the original extension, such as `.mp3`, `.wav`, or `.mp4`.
+
 ## Transcript format
 
-The diarized transcript is formatted like this:
+The diarized transcript looks like this:
 
 ```text
 SPEAKER A
-Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+Thanks everyone for joining us today.
 
 SPEAKER B
-Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+Happy to be here. Let’s get started.
 ```
 
-Speaker labels are generic by design. The script identifies who spoke when, but it does not infer real speaker names.
+Speaker labels are generic by design. The script identifies speaker turns, not speaker names.
 
 ## Requirements
 
-* macOS Terminal
+* macOS
 * Python 3.12
 * Homebrew
 * `ffmpeg`
 * `yt-dlp`
 * `whisperx`
+* `browser-cookie3`
+* `requests`
 * A Hugging Face account
 * Access to the gated `pyannote/speaker-diarization-community-1` model
-* A Hugging Face read token
+* A Hugging Face read token stored in `HF_TOKEN`
 
 ## Installation
 
-### 1. Go to the project folder
+### 1. Go to the project directory
 
 ```bash
 cd /Users/tristan/Documents/Repos/youtube_transcriber
 ```
 
-### 2. Recreate the virtual environment with Python 3.12
-
-Python 3.12 is the recommended version for this project.
+### 2. Create a fresh virtual environment with Python 3.12
 
 ```bash
 rm -rf .venv
@@ -104,7 +113,7 @@ If that Python path does not exist, find it with:
 which python3.12
 ```
 
-Then use the returned full path instead.
+Then use the full path returned by that command.
 
 ### 3. Install system dependencies
 
@@ -114,11 +123,9 @@ brew install ffmpeg yt-dlp
 
 ### 4. Install Python dependencies
 
-With the virtual environment activated:
-
 ```bash
 pip install --upgrade pip
-pip install whisperx yt-dlp
+pip install whisperx yt-dlp browser-cookie3 requests
 ```
 
 ## Hugging Face setup
@@ -127,111 +134,112 @@ Speaker diarization requires access to a gated pyannote model.
 
 ### 5. Create a Hugging Face token
 
-Use the minimum permissions needed:
+Use the minimum permissions:
 
-* Token type: **Fine-grained**
-* Permission: **Read**
+* token type: **Fine-grained**
+* permission: **Read**
 
 ### 6. Accept access to the diarization model
 
-In your browser, visit the pyannote speaker diarization model page and accept the access conditions for:
+Visit the model page in your browser and accept the access conditions for:
 
 * `pyannote/speaker-diarization-community-1`
 
-Make sure you do this with the **same Hugging Face account** that created your token.
+Make sure you do this with the same Hugging Face account that created your token.
 
 ### 7. Export the token
 
 ```bash
-export HF_TOKEN="your_new_read_only_token"
+export HF_TOKEN="your_read_only_token"
 ```
 
-If you previously exposed a token, revoke it and generate a fresh one first.
-
-## Verify your environment
-
-Run the following checks inside the virtual environment:
-
-```bash
-python --version
-which python
-which whisperx
-which yt-dlp
-which ffmpeg
-which ffprobe
-```
-
-All commands should return valid paths.
+If you previously exposed a token, revoke it and create a new one.
 
 ## Usage
 
-Run the script with a real video URL:
+### Local file
+
+```bash
+python app.py "/Users/tristan/Downloads/interview.mp3"
+```
+
+### YouTube
 
 ```bash
 python app.py "https://www.youtube.com/watch?v=nrtXap6h2Dw"
 ```
 
-The script will create a folder inside:
+### Embedded Vimeo page
 
-```text
-/Users/tristan/Documents/Transcripts/
+```bash
+python app.py "https://www.inma.org/modules/event/2026AgenticAI/replay/"
 ```
 
-and save all generated outputs there.
+## How the script decides what to do
 
-## Expected workflow
+The input flow is:
 
-When the script runs successfully, it should:
+1. If the input is an existing local file path, process it directly.
+2. Else if the input is a YouTube URL, download and process it directly.
+3. Else if the input is another URL, treat it as a webpage and scan for embedded Vimeo player URLs.
 
-1. Download the source audio
-2. Save the original audio file
-3. Convert the audio with `ffmpeg`
-4. Generate a plain Whisper transcript
-5. Generate a speaker-diarized transcript
-6. Save the raw diarization JSON
-7. Write a metadata file
-8. Rename the folder to a readable date + headline + video ID format
+## What the script does
+
+For each source, the script:
+
+1. copies or downloads the source media
+2. saves the source file into a transcript folder
+3. converts the source to a WAV file with `ffmpeg`
+4. generates a plain transcript with WhisperX
+5. generates a diarized transcript with WhisperX + pyannote
+6. saves the raw diarization JSON
+7. writes metadata for traceability
+8. renames the folder to a readable date + headline + id format
 
 ## Metadata
 
-The script writes a `metadata.json` file containing details such as:
+Each transcript folder includes a `metadata.json` file with information such as:
 
+* original input
+* source type
 * original URL
-* video ID
-* video title
-* output folder name
-* creation date
+* local file path, if applicable
+* download URL, if applicable
+* referer page, if applicable
+* folder identifier
+* source label/title
 * model used
-* language setting
+* language
+* browser used for cookie loading
 
 ## Notes on naming
 
-Folder names are generated using:
+Folder names use:
 
 * the current date
 * a short readable slug derived from transcript content
-* the video ID
+* a stable identifier
 
-This keeps folders readable while still making them easy to trace back to the original source.
-
-The current implementation uses a deterministic local heuristic for the slug rather than an online AI service.
+This keeps folders readable while still making them easy to trace back to the source.
 
 ## Troubleshooting
 
-### Hugging Face 403 or gated model error
+### `HF_TOKEN is not set`
 
-If you see a 403 error when WhisperX tries to run diarization, usually one of these is true:
-
-* You did not accept the model’s access conditions
-* Your token belongs to a different Hugging Face account
-* Your token does not have read access
-* Your old token was revoked and your shell is still using it
-
-Set a fresh token and try again:
+Export your Hugging Face token before running the script:
 
 ```bash
-export HF_TOKEN="your_new_read_only_token"
+export HF_TOKEN="your_read_only_token"
 ```
+
+### Hugging Face 403 or gated model error
+
+Usually one of these is true:
+
+* you did not accept the model’s access conditions
+* your token belongs to a different Hugging Face account
+* your token does not have read access
+* your shell is still using an old token
 
 ### `whisperx` not found
 
@@ -270,15 +278,21 @@ Install or reinstall it:
 brew install yt-dlp
 ```
 
-Or inside the virtual environment:
+Or install it in the virtual environment:
 
 ```bash
 pip install yt-dlp
 ```
 
-### Wrong Python version
+### Embedded Vimeo page finds no videos
 
-If you run into environment issues under Python 3.14 or newer, recreate the virtual environment with Python 3.12 and reinstall dependencies.
+This usually means one of these:
+
+* the page content is not accessible with your current browser session
+* the embeds are loaded in a more dynamic way than expected
+* the page is not using Vimeo embeds in the format the script currently scans for
+
+In that case, confirm you can view the page in the same browser whose cookies you are using.
 
 ## Notes on quality
 
@@ -286,25 +300,25 @@ Speaker diarization works best when:
 
 * speakers do not talk over one another too much
 * the audio is reasonably clean
-* the speakers have distinct voices
-* there is not excessive background noise or music
+* there is limited background noise
+* speakers have distinct voices
 
-Interviews, panels, and stage conversations usually work better than noisy recordings or heavily edited audio.
+Interviews, stage conversations, and panel discussions usually work better than noisy recordings or highly edited audio.
 
 ## Security note
 
-Do not paste API keys or Hugging Face tokens into issue threads, chat logs, or screenshots. If a token is exposed, revoke it and create a new one.
+Do not paste Hugging Face tokens into chat logs, screenshots, issue threads, or commits. If a token is exposed, revoke it and generate a new one.
 
 ## Future improvements
 
-Potential upgrades for this project:
+Possible next steps:
 
 * optional timestamps in a second output file
-* export to `.md` or `.docx`
-* a simple web interface for pasting video URLs
-* manual speaker renaming after transcription
-* replacing the local slug heuristic with a local LLM-generated headline
-* broader support for non-YouTube embedded video pages
+* export to Markdown or DOCX
+* manual speaker renaming
+* better embedded-video detection beyond Vimeo
+* optional local LLM-based folder naming
+* a small web UI for pasting links
 
 ## License
 
@@ -316,5 +330,6 @@ This workflow depends on:
 
 * WhisperX for local transcription and diarization
 * pyannote for speaker diarization
-* yt-dlp for audio download
+* yt-dlp for media download
 * ffmpeg for audio conversion
+* browser-cookie3 for browser session cookie access

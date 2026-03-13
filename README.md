@@ -8,7 +8,7 @@ This project transcribes audio and video into two text outputs:
 It is designed for local use on macOS and saves every run into a structured folder under:
 
 ```text
-/Users/tristan/Documents/Transcripts/
+/Users/{{you}}/Documents/Transcripts/
 ```
 
 ## What it supports
@@ -20,8 +20,8 @@ The script accepts three kinds of input:
 Examples:
 
 ```bash
-python app.py "/Users/tristan/Downloads/interview.mp3"
-python app.py "/Users/tristan/Movies/panel.mp4"
+python app.py "/Users/{{you}}/Downloads/interview.mp3"
+python app.py "/Users/{{you}}/Movies/panel.mp4"
 ```
 
 ### 2. YouTube URL
@@ -47,7 +47,7 @@ For embedded Vimeo pages, the script uses your browser cookies and page context 
 Each processed source creates a folder like:
 
 ```text
-/Users/tristan/Documents/Transcripts/2026-03-12_future-of-local-journalism_nrtXap6h2Dw/
+/Users/{{you}}/Documents/Transcripts/2026-03-12_future-of-local-journalism_nrtXap6h2Dw/
 ```
 
 Inside that folder, the script saves:
@@ -92,10 +92,10 @@ Speaker labels are generic by design. The script identifies speaker turns, not s
 
 ## Installation
 
-### 1. Go to the project directory
+### 1. Go to the project directory, e.g.
 
 ```bash
-cd /Users/tristan/Documents/Repos/youtube_transcriber
+cd /Users/{{you}}/Documents/Repos/youtube_transcriber
 ```
 
 ### 2. Create a fresh virtual environment with Python 3.12
@@ -160,7 +160,7 @@ If you previously exposed a token, revoke it and create a new one.
 ### Local file
 
 ```bash
-python app.py "/Users/tristan/Downloads/interview.mp3"
+python app.py "/Users/{{you}}/Downloads/interview.mp3"
 ```
 
 ### YouTube

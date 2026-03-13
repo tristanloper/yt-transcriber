@@ -16,7 +16,9 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import parse_qs, urljoin, urlparse
 
-TRANSCRIPTS_ROOT = Path("/Users/tristan/Documents/Transcripts")
+from dotenv import load_dotenv
+
+TRANSCRIPTS_ROOT = Path.home() / "Documents" / "Transcripts"
 DEFAULT_BROWSER = "chrome"
 PAGE_FETCH_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -41,10 +43,11 @@ class UserFacingError(RuntimeError):
     pass
 
 
-def sanitize_filename(value: str) -> str:
-    value = re.sub(r"[^a-zA-Z0-9._ -]", "_", value)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value[:120] or "transcript"
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def slugify(value: str, max_words: int = 8, max_len: int = 60) -> str:
@@ -61,13 +64,33 @@ def compact_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def print_step(message: str) -> None:
+    print(message)
+
+
 def check_command(name: str) -> None:
     if shutil.which(name) is None:
         raise UserFacingError(f"'{name}' is not installed or not on PATH.")
 
 
-def run(cmd: list[str]) -> None:
-    subprocess.run(cmd, check=True)
+def run(cmd: list[str], *, quiet: bool = True) -> subprocess.CompletedProcess:
+    if quiet:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                cmd,
+                output=result.stdout,
+                stderr=result.stderr,
+            )
+        return result
+
+    return subprocess.run(cmd, check=True, text=True)
 
 
 def is_youtube_url(url: str) -> bool:
@@ -90,7 +113,6 @@ def extract_video_id(url: str) -> str:
 
     if parsed.netloc in {"youtu.be", "www.youtu.be"}:
         return parsed.path.strip("/") or "video"
-
     if "v" in qs and qs["v"]:
         return qs["v"][0]
 
@@ -126,7 +148,7 @@ def fetch_page_html(url: str, browser: str) -> str:
         )
         response.raise_for_status()
         return response.text
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise UserFacingError(f"Could not fetch page HTML for {url}: {exc}") from exc
 
 
@@ -158,53 +180,62 @@ def download_audio_from_url(
     referer: str | None,
     browser: str,
     out_dir: Path,
+    debug: bool,
 ) -> tuple[Path, str]:
     out_template = str(out_dir / "%(title)s.%(ext)s")
     cmd = [
         "yt-dlp",
         "--cookies-from-browser", browser,
+        "--no-warnings",
         "-f", "bestaudio/best",
         "--no-playlist",
         "-o", out_template,
     ]
+
+    if not debug:
+        cmd.extend(["--quiet", "--no-progress"])
+
+    if is_youtube_url(source_url):
+        cmd.extend(["--remote-components", "ejs:github"])
+
     if referer:
         cmd.extend(["--referer", referer])
+
     cmd.append(source_url)
 
     try:
-        run(cmd)
+        run(cmd, quiet=not debug)
     except subprocess.CalledProcessError as exc:
-        raise UserFacingError(f"Could not download audio from {source_url}") from exc
+        detail = exc.stderr or exc.output or ""
+        raise UserFacingError(f"Could not download audio from {source_url}\n{detail}".strip()) from exc
 
-    files = sorted(
-        [p for p in out_dir.iterdir() if p.is_file()],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    files = sorted([p for p in out_dir.iterdir() if p.is_file()], key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         raise UserFacingError(f"Download appeared to succeed, but no media file was found for {source_url}")
 
-    source_file = files[0]
-    return source_file, source_file.stem
+    return files[0], files[0].stem
 
 
-def convert_to_wav(source_path: Path, wav_path: Path) -> Path:
+def convert_to_wav(source_path: Path, wav_path: Path, debug: bool) -> Path:
+    cmd = [
+        "ffmpeg",
+        "-loglevel", "info" if debug else "error",
+        "-y",
+        "-i", str(source_path),
+        "-vn",
+        "-ac", "1",
+        "-ar", "16000",
+        str(wav_path),
+    ]
     try:
-        run([
-            "ffmpeg",
-            "-y",
-            "-i", str(source_path),
-            "-vn",
-            "-ac", "1",
-            "-ar", "16000",
-            str(wav_path),
-        ])
+        run(cmd, quiet=not debug)
     except subprocess.CalledProcessError as exc:
-        raise UserFacingError(f"ffmpeg could not convert {source_path.name} to wav") from exc
+        detail = exc.stderr or exc.output or ""
+        raise UserFacingError(f"ffmpeg could not convert {source_path.name} to wav\n{detail}".strip()) from exc
     return wav_path
 
 
-def run_whisper_plain(audio_path: Path, output_dir: Path, model: str, language: str | None) -> Path:
+def run_whisper_plain(audio_path: Path, output_dir: Path, model: str, language: str | None, debug: bool) -> Path:
     cmd = [
         "whisperx",
         str(audio_path),
@@ -217,9 +248,10 @@ def run_whisper_plain(audio_path: Path, output_dir: Path, model: str, language: 
         cmd.extend(["--language", language])
 
     try:
-        run(cmd)
+        run(cmd, quiet=not debug)
     except subprocess.CalledProcessError as exc:
-        raise UserFacingError("Plain transcript generation failed") from exc
+        detail = exc.stderr or exc.output or ""
+        raise UserFacingError(f"Plain transcript generation failed\n{detail}".strip()) from exc
 
     txt_path = output_dir / f"{audio_path.stem}.txt"
     if not txt_path.exists():
@@ -227,7 +259,14 @@ def run_whisper_plain(audio_path: Path, output_dir: Path, model: str, language: 
     return txt_path
 
 
-def run_whisper_diarized(audio_path: Path, output_dir: Path, model: str, language: str | None, hf_token: str) -> Path:
+def run_whisper_diarized(
+    audio_path: Path,
+    output_dir: Path,
+    model: str,
+    language: str | None,
+    hf_token: str,
+    debug: bool,
+) -> Path:
     cmd = [
         "whisperx",
         str(audio_path),
@@ -242,9 +281,10 @@ def run_whisper_diarized(audio_path: Path, output_dir: Path, model: str, languag
         cmd.extend(["--language", language])
 
     try:
-        run(cmd)
+        run(cmd, quiet=not debug)
     except subprocess.CalledProcessError as exc:
-        raise UserFacingError("Diarized transcript generation failed") from exc
+        detail = exc.stderr or exc.output or ""
+        raise UserFacingError(f"Diarized transcript generation failed\n{detail}".strip()) from exc
 
     json_path = output_dir / f"{audio_path.stem}.json"
     if not json_path.exists():
@@ -263,7 +303,6 @@ def normalize_speaker_name(raw: str, mapping: dict[str, str]) -> str:
 def format_diarized_transcript(json_path: Path) -> str:
     data = json.loads(json_path.read_text(encoding="utf-8"))
     segments = data.get("segments", [])
-
     speaker_map: dict[str, str] = {}
     blocks: list[tuple[str, str]] = []
 
@@ -298,7 +337,6 @@ def generate_headline_slug(label: str, transcript_text: str, fallback_id: str) -
         "will", "here", "like", "some", "much", "many", "over", "only", "really", "thank",
         "thanks", "good", "great", "well", "today", "tonight", "journalism", "news",
     }
-
     freq: dict[str, int] = {}
     for word in candidates:
         if word in stopwords or len(word) < 4:
@@ -349,9 +387,16 @@ def write_metadata(path: Path, context: SourceContext, whisper_model: str, langu
     path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
-def process_source_file(source_file: Path, context: SourceContext, browser: str, model: str, language: str | None, hf_token: str) -> Path:
+def process_source_file(
+    source_file: Path,
+    context: SourceContext,
+    browser: str,
+    model: str,
+    language: str | None,
+    hf_token: str,
+    debug: bool,
+) -> Path:
     temp_folder = ensure_unique_temp_dir(context.folder_id)
-
     try:
         source_ext = source_file.suffix or ".audio"
         saved_audio_path = temp_folder / f"source_audio{source_ext}"
@@ -361,16 +406,16 @@ def process_source_file(source_file: Path, context: SourceContext, browser: str,
             tmp_dir = Path(tmp)
             wav_path = tmp_dir / "audio.wav"
 
-            print("Converting audio...")
-            convert_to_wav(saved_audio_path, wav_path)
+            print_step("Converting audio...")
+            convert_to_wav(saved_audio_path, wav_path, debug)
 
-            print("Generating plain transcript...")
-            whisper_txt = run_whisper_plain(wav_path, tmp_dir, model, language)
+            print_step("Generating plain transcript...")
+            whisper_txt = run_whisper_plain(wav_path, tmp_dir, model, language, debug)
             whisper_text = whisper_txt.read_text(encoding="utf-8")
             (temp_folder / "whisper_transcript.txt").write_text(whisper_text, encoding="utf-8")
 
-            print("Generating diarized transcript...")
-            diarized_json = run_whisper_diarized(wav_path, tmp_dir, model, language, hf_token)
+            print_step("Generating diarized transcript...")
+            diarized_json = run_whisper_diarized(wav_path, tmp_dir, model, language, hf_token, debug)
             diarized_text = format_diarized_transcript(diarized_json)
             (temp_folder / "diarized_transcript.txt").write_text(diarized_text, encoding="utf-8")
             (temp_folder / "whisperx_diarized_raw.json").write_text(
@@ -394,7 +439,7 @@ def process_source_file(source_file: Path, context: SourceContext, browser: str,
         raise
 
 
-def process_local_file(local_input: str, browser: str, model: str, language: str | None, hf_token: str) -> Path:
+def process_local_file(local_input: str, browser: str, model: str, language: str | None, hf_token: str, debug: bool) -> Path:
     source_path = Path(local_input).expanduser().resolve()
     if not source_path.exists():
         raise UserFacingError(f"Local file not found: {source_path}")
@@ -406,14 +451,15 @@ def process_local_file(local_input: str, browser: str, model: str, language: str
         folder_id=slugify(source_path.stem, max_words=4) or "local-media",
         local_file=str(source_path),
     )
-    return process_source_file(source_path, context, browser, model, language, hf_token)
+    return process_source_file(source_path, context, browser, model, language, hf_token, debug)
 
 
-def process_youtube_url(url: str, browser: str, model: str, language: str | None, hf_token: str) -> Path:
+def process_youtube_url(url: str, browser: str, model: str, language: str | None, hf_token: str, debug: bool) -> Path:
     with tempfile.TemporaryDirectory(prefix="source_download_") as tmp:
         tmp_dir = Path(tmp)
-        print(f"Downloading audio from: {url}")
-        source_path, title = download_audio_from_url(url, referer=None, browser=browser, out_dir=tmp_dir)
+        print_step(f"Downloading audio from: {url}")
+        source_path, title = download_audio_from_url(url, referer=None, browser=browser, out_dir=tmp_dir, debug=debug)
+
         context = SourceContext(
             source_kind="youtube_direct",
             original_input=url,
@@ -422,25 +468,31 @@ def process_youtube_url(url: str, browser: str, model: str, language: str | None
             source_label=title,
             folder_id=extract_video_id(url),
         )
-        return process_source_file(source_path, context, browser, model, language, hf_token)
+        return process_source_file(source_path, context, browser, model, language, hf_token, debug)
 
 
-def process_embedded_page(page_url: str, browser: str, model: str, language: str | None, hf_token: str) -> list[Path]:
-    print("Fetching page and scanning for embedded Vimeo players...")
+def process_embedded_page(page_url: str, browser: str, model: str, language: str | None, hf_token: str, debug: bool) -> list[Path]:
+    print_step("Fetching page and scanning for embedded or restricted Vimeo videos...")
     html = fetch_page_html(page_url, browser)
     embed_urls = extract_vimeo_embed_urls(page_url, html)
     if not embed_urls:
         raise UserFacingError("No embedded Vimeo player URLs were found on the page")
 
-    print(f"Found {len(embed_urls)} Vimeo embed(s).")
+    print_step(f"Found {len(embed_urls)} Vimeo embed(s).")
     results: list[Path] = []
 
     for idx, embed_url in enumerate(embed_urls, start=1):
-        print(f"\n=== Processing embed {idx}/{len(embed_urls)} ===")
+        print_step(f"\n=== Processing embed {idx}/{len(embed_urls)} ===")
         with tempfile.TemporaryDirectory(prefix="embed_download_") as tmp:
             tmp_dir = Path(tmp)
-            print(f"Downloading audio from embed: {embed_url}")
-            source_path, title = download_audio_from_url(embed_url, referer=page_url, browser=browser, out_dir=tmp_dir)
+            print_step(f"Downloading audio from embed: {embed_url}")
+            source_path, title = download_audio_from_url(
+                embed_url,
+                referer=page_url,
+                browser=browser,
+                out_dir=tmp_dir,
+                debug=debug,
+            )
             context = SourceContext(
                 source_kind="embedded_vimeo",
                 original_input=page_url,
@@ -450,7 +502,7 @@ def process_embedded_page(page_url: str, browser: str, model: str, language: str
                 source_label=title,
                 folder_id=extract_video_id(embed_url),
             )
-            results.append(process_source_file(source_path, context, browser, model, language, hf_token))
+            results.append(process_source_file(source_path, context, browser, model, language, hf_token, debug))
 
     return results
 
@@ -467,33 +519,38 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    load_dotenv("env.local")
+    load_dotenv()
+
     args = parse_args()
     hf_token = os.environ.get("HF_TOKEN")
     if not hf_token:
         raise UserFacingError("HF_TOKEN is not set")
 
+    debug = env_flag("DEBUG", default=False)
+
     check_command("yt-dlp")
     check_command("ffmpeg")
     check_command("ffprobe")
     check_command("whisperx")
+
     TRANSCRIPTS_ROOT.mkdir(parents=True, exist_ok=True)
 
     user_input = args.input
+
     if is_local_file_input(user_input):
-        process_local_file(user_input, args.browser, args.model, args.language, hf_token)
+        process_local_file(user_input, args.browser, args.model, args.language, hf_token, debug)
         return
 
     if is_youtube_url(user_input):
-        process_youtube_url(user_input, args.browser, args.model, args.language, hf_token)
+        process_youtube_url(user_input, args.browser, args.model, args.language, hf_token, debug)
         return
 
     if is_probable_url(user_input):
-        process_embedded_page(user_input, args.browser, args.model, args.language, hf_token)
+        process_embedded_page(user_input, args.browser, args.model, args.language, hf_token, debug)
         return
 
-    raise UserFacingError(
-        "Input was not recognized as an existing local file, a YouTube URL, or a valid webpage URL"
-    )
+    raise UserFacingError("Input was not recognized as an existing local file, a YouTube URL, or a valid webpage URL")
 
 
 if __name__ == "__main__":
@@ -508,6 +565,6 @@ if __name__ == "__main__":
     except subprocess.CalledProcessError as exc:
         print(f"\nCommand failed: {' '.join(exc.cmd)}", file=sys.stderr)
         sys.exit(1)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"\nUnexpected error: {exc}", file=sys.stderr)
         sys.exit(1)

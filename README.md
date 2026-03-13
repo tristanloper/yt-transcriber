@@ -3,25 +3,27 @@
 This project transcribes audio and video into two text outputs:
 
 * a plain transcript
-* a diarized transcript grouped into `SPEAKER A`, `SPEAKER B`, etc.
+* a diarized transcript grouped into `SPEAKER A`, `SPEAKER B`, and so on
 
-It is designed for local use on macOS and saves every run into a structured folder under:
+It is designed for local use on macOS and saves each run into a structured folder under the current user's Documents directory:
 
 ```text
-/Users/{{you}}/Documents/Transcripts/
+/Users/<your-username>/Documents/Transcripts/
 ```
+
+The script creates `Documents/Transcripts` automatically if it does not already exist. It does not create unrelated directories such as `Repos`.
 
 ## What it supports
 
-The script accepts two kinds of input:
+The script accepts three kinds of input:
 
 ### 1. Local media file
 
 Examples:
 
 ```bash
-python app.py "/Users/{{you}}/Downloads/interview.mp3"
-python app.py "/Users/{{you}}/Movies/panel.mp4"
+python app.py "/Users/<your-username>/Downloads/interview.mp3"
+python app.py "/Users/<your-username>/Movies/panel.mp4"
 ```
 
 ### 2. YouTube URL
@@ -32,12 +34,22 @@ Example:
 python app.py "https://www.youtube.com/watch?v=nrtXap6h2Dw"
 ```
 
+### 3. Webpage with embedded or access-restricted Vimeo videos
+
+Example:
+
+```bash
+python app.py "https://example.com/private-event-replay/"
+```
+
+For embedded or access-restricted Vimeo pages, the script uses your browser cookies and the embedding page context to find and process the underlying player URLs.
+
 ## Output structure
 
 Each processed source creates a folder like:
 
 ```text
-/Users/{{you}}/Documents/Transcripts/2026-03-12_future-of-local-journalism_nrtXap6h2Dw/
+/Users/<your-username>/Documents/Transcripts/2026-03-12_future-of-local-journalism_nrtXap6h2Dw/
 ```
 
 Inside that folder, the script saves:
@@ -76,28 +88,29 @@ Speaker labels are generic by design. The script identifies speaker turns, not s
 * `whisperx`
 * `browser-cookie3`
 * `requests`
+* `python-dotenv`
 * A Hugging Face account
 * Access to the gated `pyannote/speaker-diarization-community-1` model
-* A Hugging Face read token stored in `HF_TOKEN`
+* A Hugging Face read token stored in `env.local` or `.env`
 
 ## Installation
 
-### 1. Go to the project directory, e.g.
+### 1. Go to your project directory
 
 ```bash
-cd /Users/{{you}}/Documents/Repos/youtube_transcriber
+cd /path/to/your/project
 ```
 
 ### 2. Create a fresh virtual environment with Python 3.12
 
 ```bash
 rm -rf .venv
-/opt/homebrew/bin/python3.12 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 python --version
 ```
 
-If that Python path does not exist, find it with:
+If `python3.12` is not on your path, find it with:
 
 ```bash
 which python3.12
@@ -114,8 +127,37 @@ brew install ffmpeg yt-dlp
 ### 4. Install Python dependencies
 
 ```bash
-pip install --upgrade pip
-pip install whisperx yt-dlp browser-cookie3 requests
+python -m pip install --upgrade pip
+python -m pip install whisperx yt-dlp browser-cookie3 requests python-dotenv
+```
+
+## Secret management
+
+Use a local env file for secrets.
+
+### Recommended: `env.local`
+
+Create a file named `env.local` in the project root:
+
+```text
+HF_TOKEN=your_hugging_face_token_here
+```
+
+The app loads `env.local` first and then `.env` if present.
+
+### Add it to `.gitignore`
+
+```gitignore
+env.local
+.env
+```
+
+### Optional example file
+
+You can commit a placeholder file like `.env.example` containing:
+
+```text
+HF_TOKEN=your_token_here
 ```
 
 ## Hugging Face setup
@@ -137,18 +179,12 @@ Visit the model page in your browser and accept the access conditions for:
 
 Make sure you do this with the same Hugging Face account that created your token.
 
-### 7. Export the token
-
-```bash
-export HF_TOKEN="your_read_only_token"
-```
-
 ## Usage
 
 ### Local file
 
 ```bash
-python app.py "/Users/{{you}}/Downloads/interview.mp3"
+python app.py "/Users/<your-username>/Downloads/interview.mp3"
 ```
 
 ### YouTube
@@ -157,26 +193,33 @@ python app.py "/Users/{{you}}/Downloads/interview.mp3"
 python app.py "https://www.youtube.com/watch?v=nrtXap6h2Dw"
 ```
 
+### Embedded or restricted Vimeo page
+
+```bash
+python app.py "https://example.com/private-event-replay/"
+```
+
 ## How the script decides what to do
 
 The input flow is:
 
 1. If the input is an existing local file path, process it directly.
 2. Else if the input is a YouTube URL, download and process it directly.
-3. Else if the input is another URL, treat it as a webpage and scan for embedded player URLs.
+3. Else if the input is another URL, treat it as a webpage and scan for embedded Vimeo player URLs.
 
 ## What the script does
 
 For each source, the script:
 
 1. copies or downloads the source media
-2. saves the source file into a transcript folder
-3. converts the source to a WAV file with `ffmpeg`
-4. generates a plain transcript with WhisperX
-5. generates a diarized transcript with WhisperX + pyannote
-6. saves the raw diarization JSON
-7. writes metadata for traceability
-8. renames the folder to a readable date + headline + id format
+2. creates a transcript folder under `~/Documents/Transcripts`
+3. saves the source file into that folder
+4. converts the source to a WAV file with `ffmpeg`
+5. generates a plain transcript with WhisperX
+6. generates a diarized transcript with WhisperX + pyannote
+7. saves the raw diarization JSON
+8. writes metadata for traceability
+9. renames the folder to a readable date + headline + id format
 
 ## Metadata
 
@@ -208,10 +251,18 @@ This keeps folders readable while still making them easy to trace back to the so
 
 ### `HF_TOKEN is not set`
 
-Export your Hugging Face token before running the script:
+Create `env.local` or `.env` in the project root and add:
+
+```text
+HF_TOKEN=your_hugging_face_token_here
+```
+
+### `No module named 'dotenv'`
+
+Install the dotenv package inside the active virtual environment:
 
 ```bash
-export HF_TOKEN="your_read_only_token"
+python -m pip install python-dotenv
 ```
 
 ### Hugging Face 403 or gated model error
@@ -228,7 +279,7 @@ Usually one of these is true:
 Reinstall it inside the active virtual environment:
 
 ```bash
-pip install whisperx
+python -m pip install whisperx
 ```
 
 Then verify:
@@ -263,8 +314,28 @@ brew install yt-dlp
 Or install it in the virtual environment:
 
 ```bash
-pip install yt-dlp
+python -m pip install yt-dlp
 ```
+
+### YouTube downloads fail with challenge or reload errors
+
+If YouTube returns challenge-solver or "The page needs to be reloaded" errors, your `yt-dlp` install may need the EJS remote challenge solver. A common fix is to use:
+
+```bash
+yt-dlp --remote-components ejs:github --cookies-from-browser chrome -f bestaudio/best "YOUTUBE_URL"
+```
+
+If that works manually, add the same `--remote-components ejs:github` flag to the `yt-dlp` command used by the app.
+
+### Embedded Vimeo page finds no videos
+
+This usually means one of these:
+
+* the page content is not accessible with your current browser session
+* the embeds are loaded in a more dynamic way than expected
+* the page is not using Vimeo embeds in the format the script currently scans for
+
+In that case, confirm you can view the page in the same browser whose cookies you are using.
 
 ## Notes on quality
 
@@ -281,6 +352,8 @@ Interviews, stage conversations, and panel discussions usually work better than 
 
 Do not paste Hugging Face tokens into chat logs, screenshots, issue threads, or commits. If a token is exposed, revoke it and generate a new one.
 
+Browser cookies are used transiently when needed for restricted or embedded video access, but they should not be exported or committed as project files.
+
 ## Future improvements
 
 Possible next steps:
@@ -288,7 +361,7 @@ Possible next steps:
 * optional timestamps in a second output file
 * export to Markdown or DOCX
 * manual speaker renaming
-* better embedded-video detection
+* better embedded-video detection beyond Vimeo
 * optional local LLM-based folder naming
 * a small web UI for pasting links
 
@@ -305,3 +378,4 @@ This workflow depends on:
 * yt-dlp for media download
 * ffmpeg for audio conversion
 * browser-cookie3 for browser session cookie access
+* python-dotenv for local secret loading

@@ -13,7 +13,7 @@ It is designed for local use on macOS and saves every run into a structured fold
 
 ## What it supports
 
-The script accepts three kinds of input:
+The script accepts two kinds of input:
 
 ### 1. Local media file
 

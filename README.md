@@ -157,19 +157,13 @@ python app.py "/Users/{{you}}/Downloads/interview.mp3"
 python app.py "https://www.youtube.com/watch?v=nrtXap6h2Dw"
 ```
 
-### Embedded Vimeo page
-
-```bash
-python app.py "https://www.inma.org/modules/event/2026AgenticAI/replay/"
-```
-
 ## How the script decides what to do
 
 The input flow is:
 
 1. If the input is an existing local file path, process it directly.
 2. Else if the input is a YouTube URL, download and process it directly.
-3. Else if the input is another URL, treat it as a webpage and scan for embedded Vimeo player URLs.
+3. Else if the input is another URL, treat it as a webpage and scan for embedded player URLs.
 
 ## What the script does
 
@@ -272,16 +266,6 @@ Or install it in the virtual environment:
 pip install yt-dlp
 ```
 
-### Embedded Vimeo page finds no videos
-
-This usually means one of these:
-
-* the page content is not accessible with your current browser session
-* the embeds are loaded in a more dynamic way than expected
-* the page is not using Vimeo embeds in the format the script currently scans for
-
-In that case, confirm you can view the page in the same browser whose cookies you are using.
-
 ## Notes on quality
 
 Speaker diarization works best when:
@@ -304,7 +288,7 @@ Possible next steps:
 * optional timestamps in a second output file
 * export to Markdown or DOCX
 * manual speaker renaming
-* better embedded-video detection beyond Vimeo
+* better embedded-video detection
 * optional local LLM-based folder naming
 * a small web UI for pasting links
 

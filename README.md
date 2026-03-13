@@ -32,16 +32,6 @@ Example:
 python app.py "https://www.youtube.com/watch?v=nrtXap6h2Dw"
 ```
 
-### 3. Webpage with embedded private Vimeo videos
-
-Example:
-
-```bash
-python app.py "https://www.inma.org/modules/event/2026AgenticAI/replay/"
-```
-
-For embedded Vimeo pages, the script uses your browser cookies and page context to find and process the embedded videos.
-
 ## Output structure
 
 Each processed source creates a folder like:
@@ -152,8 +142,6 @@ Make sure you do this with the same Hugging Face account that created your token
 ```bash
 export HF_TOKEN="your_read_only_token"
 ```
-
-If you previously exposed a token, revoke it and create a new one.
 
 ## Usage
 
